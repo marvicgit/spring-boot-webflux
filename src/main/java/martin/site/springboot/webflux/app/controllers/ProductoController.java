@@ -1,15 +1,22 @@
 package martin.site.springboot.webflux.app.controllers;
 
 import java.time.Duration;
+import java.util.Date;
+
+import javax.validation.Valid;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Controller;
 import org.springframework.ui.Model;
+import org.springframework.validation.BindingResult;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.SessionAttributes;
+import org.springframework.web.bind.support.SessionStatus;
 import org.thymeleaf.spring5.context.webflux.ReactiveDataDriverContextVariable;
 
 import martin.site.springboot.webflux.app.models.documents.Producto;
@@ -17,6 +24,7 @@ import martin.site.springboot.webflux.app.models.services.ProductoService;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
+@SessionAttributes("producto")
 @Controller
 public class ProductoController {
 	@Autowired
@@ -37,6 +45,7 @@ public class ProductoController {
 	public Mono<String> crear(Model model) {
 		model.addAttribute("producto", new Producto());
 		model.addAttribute("titulo","Formulario de Producto");
+		model.addAttribute("boton","Crear");
 		return Mono.just("form");
 	}
 	
@@ -47,14 +56,61 @@ public class ProductoController {
 				.defaultIfEmpty(new Producto());
 		model.addAttribute("titulo","Editar Producto");
 		model.addAttribute("producto",productoMono);
+		model.addAttribute("boton","Editar");
 		return Mono.just("form");
 	}
 	
+	@GetMapping("/form-v2/{id}")
+	public Mono<String> editarV2(@PathVariable String id, Model model) {
+		return service.findById(id).doOnNext(p -> { 
+					log.info("producto: " + p.getNombre());
+					model.addAttribute("titulo","Editar Producto");
+					model.addAttribute("producto",p);
+					model.addAttribute("boton","Editar");
+				}).defaultIfEmpty(new Producto())
+				.flatMap(p -> {
+					if(p.getId() == null) {
+						return Mono.error(new InterruptedException("No existe el producto"));
+					}
+					return Mono.just(p);
+				})
+				.then(Mono.just("form"))
+				.onErrorResume(ex -> Mono.just("redirect:/listar?error=no+existe+el+producto"));
+		
+	}
+	
 	@PostMapping("/form")
-	public Mono<String> Guardar(Producto producto) {
+	public Mono<String> guardar(@Valid Producto producto, BindingResult result, Model model, SessionStatus status) {
+		if(result.hasErrors()) {
+			model.addAttribute("titulo","Editar Producto");
+			model.addAttribute("boton","Editar");
+			return Mono.just("form");
+		} else {
+		status.setComplete();
+		if(producto.getCreateAT() == null) {
+			producto.setCreateAT(new Date());
+		}
 		return service.save(producto)
 				.doOnNext(p -> log.info("Producto Guardado: " + p.getNombre() + " Id: " + p.getId()))
-				.thenReturn("redirect:/listar");
+				.thenReturn("redirect:/listar?sussecc=producto+guardado+con+exito");
+		}
+	}
+	
+	@GetMapping("/eliminar/{id}")
+	public Mono<String> eliminar(@PathVariable String id){
+		return service.findById(id).defaultIfEmpty(new Producto())
+				.flatMap(p -> {
+					if(p.getId() == null) {
+						return Mono.error(new InterruptedException("No existe el producto a eliminar"));
+					}
+					return Mono.just(p);
+				})
+				.flatMap(p -> {
+					log.info("eliminado producto: " + p.getNombre());
+					log.info("eliminado producto Id: " + p.getId());
+			return service.delete(p);
+		}).then(Mono.just("redirect:/listar?sussecc=producto+eliminado+con+exito"))
+		.onErrorResume(ex -> Mono.just("redirect:/listar?error=no+existe+el+producto+a+eliminar"));
 	}
 	
 	@GetMapping("/listar-datadriver")
