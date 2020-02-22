@@ -2,6 +2,7 @@ package martin.site.springboot.webflux.app.models.documents;
 
 import java.util.Date;
 
+import javax.validation.Valid;
 import javax.validation.constraints.NotEmpty;
 import javax.validation.constraints.NotNull;
 
@@ -22,7 +23,10 @@ public class Producto {
 	@DateTimeFormat(pattern="yyyy-MM-dd")
 	private Date createAT;
 	
+	@Valid
 	private Categoria categoria;
+	
+	private String foto;
 	
 	public Producto() {}
 	public Producto(String nombre, Double precio) {
@@ -62,6 +66,12 @@ public class Producto {
 	}
 	public void setCategoria(Categoria categoria) {
 		this.categoria = categoria;
+	}
+	public String getFoto() {
+		return foto;
+	}
+	public void setFoto(String foto) {
+		this.foto = foto;
 	}
 	
 	

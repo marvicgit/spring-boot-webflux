@@ -1,21 +1,33 @@
 package martin.site.springboot.webflux.app.controllers;
 
+import java.io.File;
+import java.net.MalformedURLException;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.time.Duration;
 import java.util.Date;
+import java.util.UUID;
+
 
 import javax.validation.Valid;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.core.io.Resource;
+import org.springframework.core.io.UrlResource;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.ResponseEntity;
+import org.springframework.http.codec.multipart.FilePart;
 import org.springframework.stereotype.Controller;
 import org.springframework.ui.Model;
 import org.springframework.validation.BindingResult;
-import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.ModelAttribute;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.bind.annotation.SessionAttributes;
 import org.springframework.web.bind.support.SessionStatus;
 import org.thymeleaf.spring5.context.webflux.ReactiveDataDriverContextVariable;
@@ -33,6 +45,9 @@ public class ProductoController {
 	@Autowired
 	private ProductoService service;
 	
+	@Value("${config.uploads.path}")
+	private String path;
+	
 	@Autowired
 	private CategoriaService serviceCategoria;
 	
@@ -41,6 +56,33 @@ public class ProductoController {
 	@ModelAttribute("categorias")
 	public Flux<Categoria> Categoria() {
 		return serviceCategoria.findAll();
+	}
+	
+	@GetMapping("/uploads/img/{nombreFoto:.+}")
+	public Mono<ResponseEntity<Resource>> verFoto(@PathVariable String nombreFoto) throws MalformedURLException {
+		Path ruta = Paths.get(path).resolve(nombreFoto).toAbsolutePath();
+		Resource imagen = new UrlResource(ruta.toUri());
+		return Mono.just(
+				ResponseEntity.ok()
+				.header(HttpHeaders.CONTENT_DISPOSITION , "attachment; filename=\"" + imagen.getFilename() + "\"")
+				.body(imagen)
+				);
+	}
+	
+	@GetMapping("/ver/{id}")
+	public Mono<String> ver(Model model, @PathVariable String id) {
+		return service.findById(id)
+				.doOnNext(p -> {
+					model.addAttribute("producto", p);
+					model.addAttribute("titulo", "Detalle Producto");
+				}).switchIfEmpty(Mono.just(new Producto()))
+				.flatMap(p -> {
+					if(p.getId() == null) {
+						return Mono.error(new InterruptedException("No existe el producto"));
+					}
+					return Mono.just(p);
+				}).then(Mono.just("ver"))
+				.onErrorResume(ex -> Mono.just("redirect:/listar?error=no+existe+el+producto"));
 	}
 	
 	@GetMapping({"/listar", "/"})
@@ -91,7 +133,7 @@ public class ProductoController {
 	}
 	
 	@PostMapping("/form")
-	public Mono<String> guardar(@Valid Producto producto, BindingResult result, Model model, SessionStatus status) {
+	public Mono<String> guardar(@Valid Producto producto, BindingResult result, Model model, @RequestPart FilePart file, SessionStatus status) {
 		if(result.hasErrors()) {
 			model.addAttribute("titulo","Editar Producto");
 			model.addAttribute("boton","Editar");
@@ -101,8 +143,27 @@ public class ProductoController {
 		if(producto.getCreateAT() == null) {
 			producto.setCreateAT(new Date());
 		}
-		return service.save(producto)
-				.doOnNext(p -> log.info("Producto Guardado: " + p.getNombre() + " Id: " + p.getId()))
+		
+		if(!file.filename().isEmpty()) {
+			producto.setFoto(UUID.randomUUID().toString() + "-" + file.filename()
+			.replace(" ", "")
+			.replace(":", "")
+			.replace("\\", "")
+			);
+		}
+		Mono<Categoria> categoria = serviceCategoria.findById(producto.getCategoria().getId());
+		return categoria.flatMap(c -> {
+			producto.setCategoria(c);
+			return service.save(producto);
+		}).doOnNext(p -> {
+		log.info("Categoria Guardada: " + p.getCategoria().getNombre() + " Id: " + p.getCategoria().getId());
+		log.info("Producto Guardado: " + p.getNombre() + " Id: " + p.getId());
+		}).flatMap(p -> {
+			if(!file.filename().isEmpty()) {
+				return file.transferTo(new File(path + p.getFoto()));
+			}
+			return Mono.empty();
+		})
 				.thenReturn("redirect:/listar?sussecc=producto+guardado+con+exito");
 		}
 	}
